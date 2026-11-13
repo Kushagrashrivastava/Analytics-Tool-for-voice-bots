@@ -15,3 +15,6 @@ data/*.csv
 FDE Hiring Assignment*.csv
 gender_predictions.jsonl
 predictions_50.jsonl
+
+# Any CSV in the project root (assignment exports) stays local
+/*.csv

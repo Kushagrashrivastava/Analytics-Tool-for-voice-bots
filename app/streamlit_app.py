@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from aster_vale.core.callback import final_specific_callback, has_vague_postponement, parse_call_time, resolve
 from aster_vale.core.gender import predict_gender
 from aster_vale.core.llm import EvidenceExtractor, LLMConfig
-from aster_vale.core.pipeline import process_batch, read_jsonl
+from aster_vale.core.pipeline import process_record, read_jsonl
 from aster_vale.core.prompts import PROMPT_VERSION
 from aster_vale.core.schemas import Evidence
 
@@ -94,6 +94,18 @@ st.markdown("""
           font-size:.9rem; color:#1F2937}
   .qcard {background:#fff; border:1px solid #E5E7EB; border-radius:12px; padding:12px 14px; height:100%}
   .qcard .t {font-weight:700; font-size:.95rem}
+  .ecard {background:#fff; border:1px solid #E5E7EB; border-radius:12px; padding:12px 14px; margin-bottom:12px}
+  .ehead {display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:1.02rem}
+  .elost {color:#374151; font-size:.85rem; background:#F1F5F9; padding:2px 8px; border-radius:999px}
+  .estat {margin-left:auto; font-size:.78rem; padding:2px 8px; border-radius:999px; font-weight:600}
+  .estat.fix {background:#E0F2FE; color:#075985}
+  .estat.open {background:#FEF3C7; color:#92400E}
+  .ecols, .erow {display:grid; grid-template-columns:110px 1fr 18px 1fr; gap:6px; align-items:center}
+  .ecols {font-size:.75rem; color:#6B7280; text-transform:uppercase; letter-spacing:.03em}
+  .erow {padding:5px 0; border-top:1px solid #F3F4F6; font-size:.92rem}
+  .ef {color:#6B7280} .ek {font-weight:600; color:#111827} .ea {color:#9CA3AF} .eo {color:#111827}
+  .eo::before {content:"✗ "; color:#9CA3AF} .ek::before {content:"✓ "; color:#9CA3AF}
+  .ecause {margin-top:8px; color:#374151; font-size:.88rem; line-height:1.45}
   .try {margin-top:8px; padding:8px 10px; background:#FFFBEB; border-radius:6px; font-size:.88rem; color:#78350F}
 </style>""", unsafe_allow_html=True)
 
@@ -181,13 +193,10 @@ def analyse_upload(raw: list[dict], progress) -> list[dict]:
     gold = {r["transcript_id"]: r for r in raw if r.get("transcript_id") and r.get("disposition")}
     extractor = EvidenceExtractor(LLMConfig(provider="groq", cache_path=str(ROOT / ".cache/llm_cache.sqlite")),
                                   api_key=get_api_key())
-    done = {"n": 0}
-
-    def tick(_, r):
-        done["n"] += 1
-        progress.progress(done["n"] / len(records), text=f"Analysed {done['n']} of {len(records)} calls")
-
-    results = process_batch(records, extractor, concurrency=1, on_done=tick)
+    results = []
+    for i, rec in enumerate(records, 1):  # main thread: Streamlit widgets cannot be updated from worker threads
+        results.append(process_record(rec, extractor))
+        progress.progress(i / len(records), text=f"Analysed {i} of {len(records)} calls")
     return [{**res.prediction.model_dump(), "call_started_at": rec.call_started_at, "transcript": rec.transcript,
              "evidence": res.evidence.model_dump() if res.evidence else None, "trace": res.trace,
              "run": f"prompt {PROMPT_VERSION}" if res.status == "ok" else "fallback",
@@ -318,7 +327,8 @@ with tab_mgr:
     st.markdown(
         f"<div class='headline'><b>{pct(booked, N)} of calls booked a consultation</b> ({booked} of {N}). "
         f"Top reason open leads have not booked: <b>{top_reason[0]}</b> ({top_reason[1]} of {dc['Follow-up Required']}). "
-        f"As of {as_of:%d %b}: <b>{qc['Overdue']} callbacks overdue</b>, {qc['Due today']} due today.</div>",
+        f"As of {as_of:%d %b}: <b>{qc['Overdue']} callback{'s' if qc['Overdue'] != 1 else ''} overdue</b>, "
+        f"{qc['Due today']} due today.</div>",
         unsafe_allow_html=True)
 
     k = st.columns(4)
@@ -570,7 +580,8 @@ with tab_model:
         wrong = 4 * G - sum(fc.values())
         k = st.columns(3)
         parts = " + ".join(f"{fc[f] / G * WEIGHTS[f]:.1f}" for f in FIELDS)
-        kpi(k[0], "Weighted score", f"{pts:.1f} / 70", f"assignment weights · training set ({calls(G)} given)",
+        kpi(k[0], "Weighted score", f"{pts:.1f} / 70", (f"assignment weights · your file ({calls(G)} with an answer key)" if is_upload
+             else f"assignment weights · training set ({calls(G)} given)"),
             "<b>What it means:</b> the assignment's scoring formula (the “Evaluation weights” row) applied to the "
             "50 labelled calls in the sheet. It is a development score, not the private evaluation score."
             "<br><b>How it is calculated:</b> every call has 4 predicted labels. Each is compared with the answer key "
@@ -592,8 +603,9 @@ with tab_model:
         worst = max(FIELDS, key=lambda f: WEIGHTS[f] - earned[f])
         st.markdown("<p class='takeaway' style='margin-top:10px'><b>Per field:</b> "
                     + " · ".join(f"{FIELD_NAMES[f].split(' (')[0]} {fc[f]}/{G} ({pct(fc[f], G)})" for f in FIELDS)
-                    + f". Most missed points: <b>{FIELD_NAMES[worst].split(' (')[0]}</b> "
-                    f"({WEIGHTS[worst] - earned[worst]:.1f} of {70 - pts:.1f}).</p>", unsafe_allow_html=True)
+                    + (f". Most missed points: <b>{FIELD_NAMES[worst].split(' (')[0]}</b> "
+                       f"({WEIGHTS[worst] - earned[worst]:.1f} of {70 - pts:.1f})." if pts < 70 else ". No points missed.")
+                    + "</p>", unsafe_allow_html=True)
         if not is_upload:
             st.caption("Honest estimate: these calls were also used to write the prompt, so this score is optimistic. "
                        "The cleanest unseen-data number we have is 58.6 / 70 (prompt v2 on 18 calls not used while "
@@ -627,14 +639,42 @@ with tab_model:
         def show(f: str, v):
             return (nice_dt(v) if v else "no callback") if f == "next_call_at" else v
 
-        errs = [{"Call": r["transcript_id"], "Field": FIELD_NAMES[f], "Answer key": show(f, r["gold"][f]),
-                 "Our label": show(f, r[f]), "Points lost": f"−{WEIGHTS[f] / G:.2f}",
-                 "Likely cause": notes.get(r["transcript_id"], "—")}
-                for r in gold_rows for f in FIELDS if not correct(r, f)]
-        if errs:
-            with section(f"All {len(errs)} wrong labels", "A wrong label = for that call and field, our answer "
-                         "differs from the answer key in the “50 Labeled Calls” tab. Every row is shown."):
-                st.table(pd.DataFrame(errs).set_index("Call"))  # static table: wraps long causes, no inner scroll
+        # One card per call (not per label): wrong fields as "answer key -> ours", cause once, status chip
+        cards = []
+        for r in gold_rows:
+            wrong = [f for f in FIELDS if not correct(r, f)]
+            if not wrong:
+                continue
+            note = notes.get(r["transcript_id"], "")
+            status = ("Open issue" if "Open issue" in note else "Fix written · re-run pending" if "re-run" in note
+                      else "")
+            cause = note.replace("Open issue.", "").replace("; awaiting re-run.", ".").replace("awaiting re-run.", "")
+            cause = cause.strip()
+            if cause.endswith(" Prompt v3."):
+                cause = cause[: -len("Prompt v3.")] + "Addressed in prompt v3."
+            cards.append({"id": r["transcript_id"], "wrong": wrong, "lost": sum(WEIGHTS[f] / G for f in wrong),
+                          "cause": cause, "status": status, "r": r})
+        cards.sort(key=lambda c: (-c["lost"], c["id"]))
+        if cards:
+            n_wrong = sum(len(c["wrong"]) for c in cards)
+            per_field = " · ".join(f"{FIELD_NAMES[f].split(' (')[0]} {sum(f in c['wrong'] for c in cards)}"
+                                   for f in FIELDS)
+            with section(f"The {calls(len(cards))} with a wrong label",
+                         f"{n_wrong} wrong labels in total ({per_field}). A wrong label = our answer differs from the "
+                         f"answer key in the “50 Labeled Calls” tab. Biggest point losses first."):
+                cols = st.columns(2)
+                for i, c in enumerate(cards):
+                    rows_html = "".join(
+                        f"<div class='erow'><span class='ef'>{FIELD_NAMES[f].split(' (')[0]}</span>"
+                        f"<span class='ek'>{show(f, c['r']['gold'][f])}</span><span class='ea'>→</span>"
+                        f"<span class='eo'>{show(f, c['r'][f])}</span></div>" for f in c["wrong"])
+                    chip = (f"<span class='estat {'open' if c['status'] == 'Open issue' else 'fix'}'>{c['status']}</span>"
+                            if c["status"] else "")
+                    cols[i % 2].markdown(
+                        f"<div class='ecard'><div class='ehead'><b>{c['id']}</b>"
+                        f"<span class='elost'>−{c['lost']:.2f} pts</span>{chip}</div>"
+                        f"<div class='ecols'><span></span><span>Answer key</span><span></span><span>Ours</span></div>"
+                        f"{rows_html}<div class='ecause'>{c['cause'] or '—'}</div></div>", unsafe_allow_html=True)
 
     log_path = ROOT / "data/run_log.json"
     if log_path.exists() and not is_upload:
