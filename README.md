@@ -118,7 +118,9 @@ All reported numbers below come from **Groq `openai/gpt-oss-120b`**, the graded 
 ## Results
 
 See [`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) for per-field accuracy, failure patterns, the iteration log,
-runtime, token usage and cost. Predictions for all 50 supplied calls: [`predictions_50.jsonl`](predictions_50.jsonl).
+runtime, token usage and cost. Predictions for all 50 supplied calls (`predictions_50.jsonl`) come from one
+run of the frozen prompt v3; that run is in progress (throttled by the Groq free-tier daily token limit) and the
+file will be added when it completes. See ERROR_ANALYSIS.md §1 for the current status.
 
 ## Task 2 · Gender without transformers (`core/gender.py`)
 
