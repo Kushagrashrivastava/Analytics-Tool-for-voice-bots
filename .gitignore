@@ -18,3 +18,7 @@ predictions_50.jsonl
 
 # Any CSV in the project root (assignment exports) stays local
 /*.csv
+
+# Saved custom-dashboard layouts are per installation
+data/custom_widgets.json
+!data/sample_results.jsonl

@@ -291,7 +291,8 @@ st.markdown(f"<p class='scope'><b>{calls(N)}</b> made {dates[0]:%d %b} – {date
             f"<b>AI-predicted</b> by Groq <code>{MODEL_ID}</code> and checked by the written policy rules</p>",
             unsafe_allow_html=True)
 
-tab_mgr, tab_model, tab_calls = st.tabs(["📋 Manager view", "🔬 Model quality", "🔎 Call explorer"])
+tab_mgr, tab_model, tab_calls, tab_custom = st.tabs(["📋 Manager view", "🔬 Model quality", "🔎 Call explorer",
+                                                     "🧩 Custom dashboard"])
 
 
 def correct(r: dict, f: str) -> bool:
@@ -842,3 +843,216 @@ with tab_calls:
                        f"({gd['patient_is']})")
             with st.expander("Transcript", expanded=True):
                 st.text(r["transcript"])
+
+# ================================================================================================
+# CUSTOM DASHBOARD: user-built widgets, saved to a local JSON file
+# ================================================================================================
+WIDGETS_FILE = ROOT / "data/custom_widgets.json"
+WORDS_PER_MIN = 140  # spoken pace used to estimate call length from transcript words (no duration in the data)
+METRICS = {
+    "Number of calls": ["Single number", "Per day", "Per hour of day", "Per weekday"],
+    "Booking rate": ["Single number", "Per day", "Per weekday"],
+    "Average call length (estimated)": ["Single number", "Per day", "Per outcome"],
+    "Peak call time": ["Per hour of day", "Per weekday"],
+    "Outcome mix": ["Breakdown"],
+    "Reasons not booked": ["Breakdown"],
+    "Lead quality mix": ["Breakdown"],
+}
+RANGES = ["Last 7 days", "Last 30 days", "All time", "Custom range"]
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def load_widgets() -> list[dict]:
+    try:
+        return json.loads(WIDGETS_FILE.read_text()) if WIDGETS_FILE.exists() else []
+    except Exception:  # noqa: BLE001 - a broken file should not break the page
+        return []
+
+
+def call_frame(rs: list[dict]) -> pd.DataFrame:
+    out = []
+    for r in rs:
+        t = datetime.fromisoformat(r["call_started_at"])
+        words = len(r["transcript"].split())
+        out.append({"id": r["transcript_id"], "date": t.date(), "hour": t.hour, "weekday": t.weekday(),
+                    "outcome": r["disposition"], "reason": r["sub_disposition"], "lead": r["lead_quality"],
+                    "booked": r["disposition"] == "Appointment Scheduled", "minutes": words / WORDS_PER_MIN})
+    return pd.DataFrame(out)
+
+
+def in_range(df: pd.DataFrame, w: dict, anchor) -> pd.DataFrame:
+    if w["range"] == "Last 7 days":
+        lo, hi = anchor - timedelta(days=6), anchor
+    elif w["range"] == "Last 30 days":
+        lo, hi = anchor - timedelta(days=29), anchor
+    elif w["range"] == "Custom range" and w.get("start") and w.get("end"):
+        lo, hi = datetime.fromisoformat(w["start"]).date(), datetime.fromisoformat(w["end"]).date()
+    else:
+        return df
+    return df[(df["date"] >= lo) & (df["date"] <= hi)]
+
+
+def range_label(w: dict, anchor) -> str:
+    if w["range"] == "Custom range" and w.get("start"):
+        return f"{datetime.fromisoformat(w['start']):%d %b} – {datetime.fromisoformat(w['end']):%d %b}"
+    if w["range"] == "All time":
+        return "all time"
+    return f"{w['range'].lower()} (to {anchor:%d %b})"
+
+
+def small_bar(x, y, color=NEUTRAL, fmt="{}", height=230, xtitle=None):
+    fig = go.Figure(go.Bar(x=x, y=y, marker_color=color, text=[fmt.format(v) for v in y], textposition="outside",
+                           cliponaxis=False, hovertemplate="%{x}: %{y}<extra></extra>"))
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=20, b=0), plot_bgcolor="rgba(0,0,0,0)",
+                      paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(visible=False),
+                      xaxis=dict(type="category", title=xtitle, tickfont=dict(size=12)))
+    return fig
+
+
+def render_widget(w: dict, df_all: pd.DataFrame, anchor, key: str):
+    df = in_range(df_all, w, anchor)
+    for col, vals in (("outcome", w.get("outcomes")), ("lead", w.get("leads"))):
+        if vals:
+            df = df[df[col].isin(vals)]
+    n = len(df)
+    st.markdown(f"<p class='sec-title'>{w['title']}</p><p class='note'>{range_label(w, anchor)} · {calls(n)}"
+                + (" · filtered" if w.get("outcomes") or w.get("leads") else "") + "</p>", unsafe_allow_html=True)
+    if n == 0:
+        st.info("No calls in this time range or filter.")
+        return
+    m, v = w["metric"], w["view"]
+    if m == "Number of calls" and v == "Single number":
+        st.markdown(f"<div class='kpi'><div class='value'>{n}</div><div class='sub'>calls</div></div>",
+                    unsafe_allow_html=True)
+    elif m == "Booking rate" and v == "Single number":
+        b = int(df["booked"].sum())
+        st.markdown(f"<div class='kpi'><div class='value'>{pct(b, n)}</div><div class='sub'>{b} of {n} calls booked"
+                    "</div></div>", unsafe_allow_html=True)
+    elif m == "Average call length (estimated)" and v == "Single number":
+        st.markdown(f"<div class='kpi'><div class='value'>{df['minutes'].mean():.1f} min</div><div class='sub'>"
+                    f"estimated from transcript length (~{WORDS_PER_MIN} words/min)</div></div>", unsafe_allow_html=True)
+    elif v == "Per day":
+        g = df.groupby("date")
+        y = (g.size() if m == "Number of calls" else (g["booked"].mean() * 100).round(0) if m == "Booking rate"
+             else g["minutes"].mean().round(1))
+        fmt = "{:.0f}%" if m == "Booking rate" else "{:.1f}" if "length" in m else "{}"
+        fig = go.Figure(go.Bar(x=[pd.Timestamp(d) for d in y.index], y=y.values, marker_color=NEUTRAL,
+                               text=[fmt.format(val) for val in y.values], textposition="outside", cliponaxis=False))
+        fig.update_layout(height=230, margin=dict(l=0, r=0, t=20, b=0), plot_bgcolor="rgba(0,0,0,0)",
+                          paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(visible=False),
+                          xaxis=dict(type="date", tickformat="%d %b"))
+        st.plotly_chart(fig, config={"displayModeBar": False}, key=key)
+    elif v == "Per hour of day":
+        cnt = df.groupby("hour").size().reindex(range(df["hour"].min(), df["hour"].max() + 1), fill_value=0)
+        peak = int(cnt.idxmax())
+        if m == "Peak call time":
+            st.markdown(f"<p class='takeaway'>Busiest hour: <b>{peak:02d}:00–{peak + 1:02d}:00</b> "
+                        f"({cnt.max()} of {calls(n)})</p>", unsafe_allow_html=True)
+        colors = ["#D97706" if h == peak else NEUTRAL for h in cnt.index]
+        st.plotly_chart(small_bar([f"{h:02d}:00" for h in cnt.index], cnt.values.tolist(), colors),
+                        config={"displayModeBar": False}, key=key)
+    elif v == "Per weekday":
+        if m == "Booking rate":
+            y = (df.groupby("weekday")["booked"].mean() * 100).round(0).reindex(range(7)).dropna()
+            st.plotly_chart(small_bar([WEEKDAYS[i] for i in y.index], y.values.tolist(), fmt="{:.0f}%"),
+                            config={"displayModeBar": False}, key=key)
+        else:
+            cnt = df.groupby("weekday").size().reindex(range(7), fill_value=0)
+            peak = int(cnt.idxmax())
+            if m == "Peak call time":
+                st.markdown(f"<p class='takeaway'>Busiest day: <b>{WEEKDAYS[peak]}</b> ({cnt.max()} of {calls(n)})"
+                            "</p>", unsafe_allow_html=True)
+            colors = ["#D97706" if i == peak and m == "Peak call time" else NEUTRAL for i in range(7)]
+            st.plotly_chart(small_bar(WEEKDAYS, cnt.values.tolist(), colors), config={"displayModeBar": False},
+                            key=key)
+    elif v == "Per outcome":
+        y = df.groupby("outcome")["minutes"].mean().round(1).sort_values(ascending=False)
+        st.plotly_chart(hbar([(k2, v2) for k2, v2 in y.items()], OUTCOME, n, OUTCOME_SHORT).update_traces(
+            text=[f"  <b>{v2:.1f}</b> min" for v2 in y.values][::-1]), config={"displayModeBar": False}, key=key)
+        st.caption(f"Estimated from transcript length (~{WORDS_PER_MIN} words/min); real durations are not in the data.")
+    elif v == "Breakdown":
+        col, colors, names = {"Outcome mix": ("outcome", OUTCOME, OUTCOME_SHORT),
+                              "Reasons not booked": ("reason", None, None),
+                              "Lead quality mix": ("lead", LEAD, None)}[m]
+        d = df if m != "Reasons not booked" else df[df["outcome"] == "Follow-up Required"]
+        items = d[col].value_counts().items()
+        items = [(k2, int(v2)) for k2, v2 in items]
+        if m == "Lead quality mix":
+            items = sorted(items, key=lambda kv: list(LEAD).index(kv[0]))
+        st.plotly_chart(hbar(items, colors or [OUTCOME["Follow-up Required"]] * len(items), len(d), names, per=36),
+                        config={"displayModeBar": False}, key=key)
+    if "length" in m and v != "Per outcome":
+        st.caption(f"Estimated from transcript length (~{WORDS_PER_MIN} words/min); real durations are not in the data.")
+
+
+with tab_custom:
+    if "widgets" not in st.session_state:
+        st.session_state.widgets = load_widgets()
+    anchor = dates[-1]
+    df_all = call_frame(rows)
+    st.markdown(f"<p class='takeaway'>Build your own widgets from the {calls(N)} in this dataset. Time ranges count "
+                f"back from the last call date (<b>{anchor:%d %b %Y}</b>).</p>", unsafe_allow_html=True)
+    panel, canvas = st.columns([1, 2.6], gap="large")
+
+    with panel, st.container(border=True):
+        st.markdown("**➕ New widget**")
+        metric = st.selectbox("Metric", list(METRICS), key="cw_metric")
+        view = st.selectbox("Show as", METRICS[metric], key="cw_view")
+        rng = st.selectbox("Time range", RANGES, key="cw_range")
+        start = end = None
+        if rng == "Custom range":
+            picked = st.date_input("From – to", value=(dates[0], dates[-1]), min_value=dates[0] - timedelta(days=365),
+                                   max_value=dates[-1] + timedelta(days=365), key="cw_dates")
+            if isinstance(picked, (list, tuple)) and len(picked) == 2:
+                start, end = picked[0].isoformat(), picked[1].isoformat()
+        with st.expander("Filters (optional)"):
+            f_out = st.multiselect("Outcome", list(OUTCOME), format_func=lambda d: OUTCOME_SHORT[d], key="cw_out")
+            f_lead = st.multiselect("Lead quality", list(LEAD), key="cw_lead")
+        # key depends on the choices so the suggested title updates when the metric/view/range changes
+        title = st.text_input("Title", value=f"{metric} · {view.lower()} · {rng.lower()}",
+                              key=f"cw_title_{metric}_{view}_{rng}")
+        if st.button("Add widget", type="primary", use_container_width=True):
+            if rng == "Custom range" and not start:
+                st.warning("Pick both a start and an end date.")
+            else:
+                st.session_state.widgets.append({"title": title.strip() or metric, "metric": metric, "view": view,
+                                                 "range": rng, "start": start, "end": end,
+                                                 "outcomes": f_out, "leads": f_lead})
+                st.rerun()
+        st.divider()
+        st.markdown("**💾 Layout**")
+        if st.button("Save layout", use_container_width=True):
+            try:
+                WIDGETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                WIDGETS_FILE.write_text(json.dumps(st.session_state.widgets, indent=2))
+                st.success(f"Saved {len(st.session_state.widgets)} widget(s). They will reload next time.")
+            except OSError as e:
+                st.error(f"Could not save: {e}")
+        st.download_button("Download layout (JSON)", json.dumps(st.session_state.widgets, indent=2),
+                           file_name="custom_widgets.json", use_container_width=True)
+        up_layout = st.file_uploader("Load a layout file", type=["json"], key="cw_upload")
+        if up_layout is not None and st.button("Use this layout", use_container_width=True):
+            try:
+                loaded = json.loads(up_layout.getvalue())
+                assert isinstance(loaded, list) and all("metric" in w_ and "view" in w_ for w_ in loaded)
+                st.session_state.widgets = loaded
+                st.rerun()
+            except Exception:  # noqa: BLE001
+                st.error("That file is not a valid layout.")
+        if st.session_state.widgets and st.button("Remove all widgets", use_container_width=True):
+            st.session_state.widgets = []
+            st.rerun()
+
+    with canvas:
+        if not st.session_state.widgets:
+            st.info("No widgets yet. Pick a metric on the left and press **Add widget**. Ideas: *Peak call time · per "
+                    "hour of day*, *Average call length · single number · last 7 days*, *Number of calls · per day · "
+                    "last 30 days*.")
+        cols = st.columns(2)
+        for i, w in enumerate(st.session_state.widgets):
+            with cols[i % 2], st.container(border=True):
+                _, btn = st.columns([6, 1])
+                if btn.button("🗑", key=f"cw_del_{i}", help="Remove this widget"):
+                    st.session_state.widgets.pop(i)
+                    st.rerun()
+                render_widget(w, df_all, anchor, key=f"cw_fig_{i}")
