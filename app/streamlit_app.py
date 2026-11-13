@@ -42,14 +42,14 @@ OUTCOME_SHORT = {"Appointment Scheduled": "Booked", "Follow-up Required": "Follo
                  "Unable to Assess": "Unable to assess"}
 LEAD = {"High": "#4C1D95", "Medium": "#7C3AED", "Low": "#C4B5FD",  # ordinal -> one sequential hue
         "Not Assessable": "#D1D5DB", "Not Qualified": "#9CA3AF"}
-QUEUE = {"Overdue": "#92400E", "Due today": "#D97706", "Next 7 days": "#F59E0B", "Later": "#FCD34D"}
+QUEUE = {"Overdue": "#1E3A8A", "Due today": "#2563EB", "Next 7 days": "#93C5FD", "Later": "#DBEAFE"}  # urgency ramp
 NEUTRAL = "#475569"
 # Reasons grouped by the kind of problem, so a manager sees 4 themes instead of 9 labels
-THEMES = {"Practical": ["Travel Constraint", "Cost Concern"],
+THEMES = {"Travel & cost": ["Travel Constraint", "Cost Concern"],
           "Doubts about treatment": ["Treatment Concern", "Current Treatment"],
           "Waiting on family": ["Family Discussion"],
           "No clear blocker": ["Information Requested", "Further Discussion", "Specific Callback", "Vague Deferral"]}
-THEME_ICON = {"Practical": "🧳", "Doubts about treatment": "❓", "Waiting on family": "👨‍👩‍👧", "No clear blocker": "⏳"}
+THEME_ICON = {"Travel & cost": "🧳", "Doubts about treatment": "❓", "Waiting on family": "👨‍👩‍👧", "No clear blocker": "⏳"}
 # Suggested next action per reason, based on what agents offered in the transcripts (ideas, not measured results)
 PLAYBOOK = {
     "Travel Constraint": "offer the nearest centre or a slot on their free day, and book it during the call.",
@@ -365,7 +365,7 @@ with tab_mgr:
     steps = [("Calls made", N, NEUTRAL)]
     if unusable:
         steps.append(("Valid leads", valid, "#64748B"))
-    steps += [("Did not say no", open_, "#94A3B8"), ("Genuinely interested", keen, OUTCOME["Follow-up Required"]),
+    steps += [("Did not say no", open_, "#94A3B8"), ("Genuinely interested", keen, "#64748B"),
               ("Booked a consultation", booked, OUTCOME["Appointment Scheduled"])]
     with section("From call to booking", f"Of {calls(N)}, <b>{booked} booked</b> ({pct(booked, N)}). "
                  f"{keen - booked} more are genuinely interested but not booked yet: that is the follow-up "
@@ -1001,10 +1001,13 @@ with tab_custom:
         rng = st.selectbox("Time range", RANGES, key="cw_range")
         start = end = None
         if rng == "Custom range":
-            picked = st.date_input("From – to", value=(dates[0], dates[-1]), min_value=dates[0] - timedelta(days=365),
-                                   max_value=dates[-1] + timedelta(days=365), key="cw_dates")
-            if isinstance(picked, (list, tuple)) and len(picked) == 2:
-                start, end = picked[0].isoformat(), picked[1].isoformat()
+            d1, d2 = st.columns(2)
+            frm = d1.date_input("From", value=dates[0], key="cw_from")
+            to = d2.date_input("To", value=dates[-1], key="cw_to")
+            if frm > to:
+                st.warning("“From” is after “To”; swapped.")
+                frm, to = to, frm
+            start, end = frm.isoformat(), to.isoformat()
         with st.expander("Filters (optional)"):
             f_out = st.multiselect("Outcome", list(OUTCOME), format_func=lambda d: OUTCOME_SHORT[d], key="cw_out")
             f_lead = st.multiselect("Lead quality", list(LEAD), key="cw_lead")
