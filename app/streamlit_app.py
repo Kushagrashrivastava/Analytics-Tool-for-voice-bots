@@ -138,6 +138,20 @@ def basis(r: dict) -> str:
     return "no next step agreed → next day, 11:00"
 
 
+def basis_short(r: dict) -> str:
+    """Short tag for the callback table (long form in basis())."""
+    b = basis(r)
+    if b.startswith("agreed in the call (day agreed"):
+        return "Agreed day"
+    if b.startswith("agreed in the call"):
+        return "Agreed time"
+    if b.startswith("customer postponed"):
+        return "Vague → +3 days"
+    if b.startswith("no next step"):
+        return "No next step → next day"
+    return "Fallback"
+
+
 @st.cache_data
 def load_sample() -> list[dict]:
     p = ROOT / "data/sample_results.jsonl"
@@ -380,22 +394,31 @@ with tab_mgr:
             caveat = f"Reasons are AI-classified; on {calls(G)} with an answer key they matched {acc:.0%} of the time. "
         with section("Why open leads have not booked yet",
                      f"<b>{rs[0][0]}</b> is the #1 reason: {rs[0][1]} of {F} open leads ({pct(rs[0][1], F)})."):
-            labels = [f"{THEME_ICON[t]} {t}" for t, _, _ in theme_rows][::-1]
-            vals = [n for _, n, _ in theme_rows][::-1]
-            texts = [f"  <b>{n}</b> of {F} · {pct(n, F)}   <span style='color:#6B7280'>"
-                     + " · ".join(f"{m} {v}" for m, v in parts) + "</span>" for _, n, parts in theme_rows][::-1]
-            fig = go.Figure(go.Bar(x=vals, y=labels, orientation="h", marker_color=OUTCOME["Follow-up Required"],
-                                   text=texts, textposition="outside", cliponaxis=False,
-                                   textfont=dict(size=14, color="#111827"), hovertemplate="%{y}: %{x}<extra></extra>"))
-            fig.update_layout(height=60 + 52 * len(theme_rows), margin=dict(l=0, r=10, t=4, b=4), bargap=0.3,
-                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-                              xaxis=dict(visible=False, range=[0, max(vals) * 2.6]),
-                              yaxis=dict(tickfont=dict(size=15, color="#111827"), ticksuffix="  "))
-            st.plotly_chart(fig, config={"displayModeBar": False})
+            shades = ["#92400E", "#D97706", "#F59E0B", "#FCD34D"]  # amber family = follow-up, darkest = biggest
+            pc, lc_ = st.columns([1, 1.1])
+            with pc:
+                fig = go.Figure(go.Pie(
+                    labels=[t for t, _, _ in theme_rows], values=[n for _, n, _ in theme_rows], hole=0.55,
+                    sort=False, direction="clockwise", rotation=0, marker=dict(colors=shades[:len(theme_rows)],
+                                                                            line=dict(color="white", width=2)),
+                    texttemplate="<b>%{value}</b><br>%{percent:.0%}", textposition="inside",
+                    textfont=dict(size=15), insidetextorientation="horizontal",
+                    hovertemplate="%{label}: %{value} of " + str(F) + " open leads (%{percent:.0%})<extra></extra>"))
+                fig.add_annotation(text=f"<b>{F}</b><br>open leads", showarrow=False, font=dict(size=18, color="#111827"))
+                fig.update_layout(height=300, margin=dict(l=0, r=0, t=6, b=6), showlegend=False,
+                                  paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig, config={"displayModeBar": False})
+            with lc_:
+                for (t, n, parts), colr in zip(theme_rows, shades):
+                    inner = " · ".join(f"{m} <b>{v}</b>" for m, v in parts)
+                    st.markdown(f"<div style='border-left:8px solid {colr}; padding:6px 12px; margin:10px 0; "
+                                f"background:#fff; border-radius:8px'><div style='font-size:1.02rem'>{THEME_ICON[t]} "
+                                f"<b>{t}</b> · {n} of {F} ({pct(n, F)})</div><div class='note' style='font-size:.9rem'>"
+                                f"{inner}</div></div>", unsafe_allow_html=True)
             ni = Counter(r["sub_disposition"] for r in rows if r["disposition"] == "Not Interested")
             extra = f"Not counted here: {sum(ni.values())} people who said no. " if ni else ""
-            st.caption(f"Open leads = calls that ended in “follow-up needed” ({F}). Each bar is a theme; the grey text "
-                       f"lists the exact reasons inside it. {extra}{caveat}")
+            st.caption(f"Open leads = calls that ended in “follow-up needed” ({F}). Each slice is a theme; the list beside "
+                       f"it shows the exact reasons inside each theme. {extra}{caveat}")
 
             st.markdown("**Top 3 reasons, in the customer's words, and what to try**")
             qcols = st.columns(3)
@@ -418,52 +441,116 @@ with tab_mgr:
             st.caption("“What to try” lines are suggestions drawn from what agents offered in these calls "
                        "(e.g. prepay discount, senior-doctor slot), not measured results.")
 
-    with section("Callback queue", f"<b>{qc['Overdue']} overdue</b>, <b>{qc['Due today']} due today</b>, "
-                 f"{qc['Next 7 days']} in the next 7 days and {qc['Later']} later (as of {as_of:%d %b %Y})."):
+    with section("Callback queue", f"<b>{len(cb)} people to call back.</b> As of {as_of:%a %d %b %Y}: "
+                 f"<b>{qc['Overdue']} overdue</b>, <b>{qc['Due today']} due today</b>, {qc['Next 7 days']} in the "
+                 f"next 7 days, {qc['Later']} later."):
         if cb:
-            mcols = st.columns(4)
-            for col, s in zip(mcols, QUEUE):
-                col.markdown(f"<div class='kpi' style='border-left:6px solid {QUEUE[s]}'><div class='label'>{s}"
-                             f"</div><div class='value'>{qc[s]}</div></div>", unsafe_allow_html=True)
-            per_day = Counter((x["_when"].date(), x["_status"]) for x in cb)
+            # 1) One status strip: the whole bar = every callback, split by urgency
             fig = go.Figure()
-            for s in QUEUE:
-                ds = sorted(d for d, st_ in per_day if st_ == s)
-                if ds:
-                    fig.add_bar(x=ds, y=[per_day[(d, s)] for d in ds], name=s, marker_color=QUEUE[s],
-                                text=[per_day[(d, s)] for d in ds], textposition="outside", cliponaxis=False,
-                                hovertemplate="%{x|%a %d %b}: %{y}<extra>" + s + "</extra>")
-            fig.update_layout(barmode="stack", height=230, margin=dict(l=0, r=0, t=24, b=0),
-                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                              yaxis=dict(visible=False), legend=dict(orientation="h", y=1.18),
-                              xaxis=dict(type="date", tickformat="%d %b"))  # real date axis keeps the gaps
-            st.plotly_chart(fig, config={"displayModeBar": False})
-            show_all = st.toggle("Show every callback (default: overdue and due today only)", value=False)
-            sel_cb = [x for x in cb if show_all or x["_status"] in ("Overdue", "Due today")]
-            qdf = pd.DataFrame([{"Status": x["_status"], "Call back at": nice_dt(x["next_call_at"]),
-                                 "Call": x["transcript_id"], "Reason": x["sub_disposition"],
-                                 "Lead": x["lead_quality"], "Why this time": basis(x)} for x in sel_cb])
-            if len(qdf):
-                table(qdf, column_config={"Why this time": st.column_config.TextColumn(width="large")})
-                st.download_button("⬇ Download this list (CSV)", qdf.to_csv(index=False), file_name="callbacks.csv")
-        st.caption("Rules: a callback time both sides agreed wins, also on booked calls (F3/F12); an agreed day with "
-                   "no time → 11:00 (F5); a vague “I'll let you know” → call date + 3 days, 11:00 (F7); otherwise "
-                   "next day, 11:00 (F8). Booked calls get a callback only if one was explicitly agreed.")
+            for stt in QUEUE:
+                if qc[stt]:
+                    fig.add_bar(y=[""], x=[qc[stt]], orientation="h", name=stt, marker_color=QUEUE[stt],
+                                text=f"<b>{stt}</b>  {qc[stt]}", textposition="inside", insidetextanchor="middle",
+                                textfont=dict(size=15, color="white" if stt in ("Overdue", "Due today") else "#111827"),
+                                hovertemplate=f"{stt}: {qc[stt]} of {len(cb)}<extra></extra>")
+            fig.update_layout(barmode="stack", height=70, margin=dict(l=0, r=0, t=0, b=0), showlegend=False,
+                              xaxis=dict(visible=False, range=[0, len(cb)]), yaxis=dict(visible=False), bargap=0,
+                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig, config={"displayModeBar": False}, key="queue_strip")
+
+            # 2) Compact workload-by-day chart on a real date axis
+            with st.expander("Callbacks per day (workload calendar)"):
+                per_day = Counter((x["_when"].date(), x["_status"]) for x in cb)
+                fig = go.Figure()
+                for stt in QUEUE:
+                    ds = sorted(d for d, s_ in per_day if s_ == stt)
+                    if ds:
+                        fig.add_bar(x=ds, y=[per_day[(d, stt)] for d in ds], name=stt, marker_color=QUEUE[stt],
+                                    text=[per_day[(d, stt)] for d in ds], textposition="outside", cliponaxis=False,
+                                    hovertemplate="%{x|%a %d %b}: %{y}<extra>" + stt + "</extra>")
+                fig.update_layout(barmode="stack", height=200, margin=dict(l=0, r=0, t=24, b=0),
+                                  plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                                  yaxis=dict(visible=False), xaxis=dict(type="date", tickformat="%d %b"),
+                                  legend=dict(orientation="h", y=1.2, traceorder="normal"))
+                st.plotly_chart(fig, config={"displayModeBar": False}, key="queue_days")
+
+            # 3) The list, split by urgency into tabs (no repeated status column)
+            def queue_table(items: list[dict], overdue: bool) -> pd.DataFrame:
+                out = []
+                for x in items:
+                    days = (x["_when"].date() - as_of).days
+                    when_rel = (f"{-days} day{'s' if -days != 1 else ''} late" if days < 0 else
+                                "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}")
+                    out.append({"Call back at": nice_dt(x["next_call_at"]), "When": when_rel,
+                                "Call": x["transcript_id"], "Reason": x["sub_disposition"],
+                                "Lead": x["lead_quality"], "Time set by": basis_short(x)})
+                return pd.DataFrame(out)
+
+            tabs = st.tabs([f"{stt} · {qc[stt]}" for stt in QUEUE])
+            for tab, stt in zip(tabs, QUEUE):
+                with tab:
+                    items = [x for x in cb if x["_status"] == stt]
+                    if items:
+                        table(queue_table(items, stt == "Overdue"))
+                    else:
+                        st.caption("Nothing here.")
+            all_df = pd.DataFrame([{"Status": x["_status"], **queue_table([x], False).iloc[0].to_dict()} for x in cb])
+            st.download_button("⬇ Download the full callback list (CSV)", all_df.to_csv(index=False),
+                               file_name="callbacks.csv")
+        st.caption("“Time set by” — Agreed time: both sides agreed a time · Agreed day: a day was agreed, no time, so "
+                   "11:00 · Vague → +3 days: customer said e.g. “I'll let you know”, so call date + 3 days at 11:00 · "
+                   "No next step → next day: nothing agreed, so call date + 1 day at 11:00 (policy rules F3–F8).")
 
     appts = []
     for r in rows:
         ev = evidence(r)
         if r["disposition"] == "Appointment Scheduled" and ev and ev.appointment_when:
-            slot = resolve(ev.appointment_when, parse_call_time(r["call_started_at"]))
-            if slot:
-                appts.append({"Appointment": nice_dt(slot.isoformat()),
-                              "Remind on": f"{slot - timedelta(days=1):%a %d %b}", "Call": r["transcript_id"],
-                              "Type": r["sub_disposition"], "Agreed as": ev.appointment_when.phrase, "_d": slot})
+            booked_on = parse_call_time(r["call_started_at"])
+            slot = resolve(ev.appointment_when, booked_on)
+            if not slot:
+                continue
+            ahead = (slot.date() - booked_on.date()).days
+            remind = slot.date() - timedelta(days=1)
+            if ahead == 0:
+                stage, remind_txt = "Same-day booking", "not needed (same day)"
+            elif remind <= booked_on.date():
+                stage, remind_txt = ("Appointment passed" if slot.date() < as_of else
+                                     "Today's appointments" if slot.date() == as_of else "Upcoming"), "booked the day before"
+            else:
+                remind_txt = f"{remind:%a %d %b}"
+                stage = None
+            if stage is None or stage == "Same-day booking":
+                stage = ("Appointment passed" if slot.date() < as_of else "Today's appointments" if slot.date() == as_of
+                         else "Remind today" if remind == as_of else "Upcoming")
+            appts.append({"_stage": stage, "_d": slot, "Appointment": nice_dt(slot.isoformat()), "Remind on": remind_txt,
+                          "Call": r["transcript_id"], "Booked": f"{ahead} day{'s' if ahead != 1 else ''} ahead"
+                          if ahead else "same day", "Agreed in the call as": f"“{ev.appointment_when.phrase}”",
+                          "Type": r["sub_disposition"]})
     if appts:
         appts.sort(key=lambda a: a["_d"])
-        with section("Appointments to confirm", f"{calls(len(appts))} booked. Calling the day before cut no-shows "
-                     "from 26% to 19% in a randomized trial (JABFM 2001)."):
-            table(pd.DataFrame(appts).drop(columns="_d"))
+        stages = ["Remind today", "Today's appointments", "Upcoming", "Appointment passed"]
+        sc_ = Counter(a["_stage"] for a in appts)
+        n_today = sc_["Today's appointments"]
+        rt = sc_["Remind today"]
+        lead_txt = (f"<b>{rt} reminder call{'s' if rt != 1 else ''} due today</b>" if rt
+                    else "no reminder calls due today")
+        with section("Appointments to confirm",
+                     f"<b>{calls(len(appts))} booked.</b> As of {as_of:%d %b}: {lead_txt}, {n_today} appointment"
+                     f"{'s' if n_today != 1 else ''} today, {sc_['Upcoming']} upcoming, "
+                     f"{sc_['Appointment passed']} already passed (check they attended)."):
+            show_type = len({a["Type"] for a in appts}) > 1
+            tabs = st.tabs([f"{s_} · {sc_[s_]}" for s_ in stages])
+            for tab, s_ in zip(tabs, stages):
+                with tab:
+                    items = [a for a in appts if a["_stage"] == s_]
+                    if items:
+                        df_ = pd.DataFrame(items).drop(columns=["_stage", "_d"] + ([] if show_type else ["Type"]))
+                        table(df_)
+                    else:
+                        st.caption("Nothing here.")
+            st.caption("Why: calling patients the day before their appointment cut no-shows from 26% to 19% in a "
+                       "randomized trial (JABFM 2001). Same-day bookings need no reminder; for passed appointments, "
+                       "check whether the patient attended.")
 
 # ================================================================================================
 # MODEL QUALITY
