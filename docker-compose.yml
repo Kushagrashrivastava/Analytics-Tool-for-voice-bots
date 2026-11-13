@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports: ["8501:8501"]
+    env_file: [.env]
+  cli:
+    build: .
+    env_file: [.env]
+    volumes: [".:/w"]
+    entrypoint: ["aster-vale"]
+    profiles: ["cli"]

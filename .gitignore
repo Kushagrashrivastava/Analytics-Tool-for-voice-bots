@@ -1,0 +1,17 @@
+.env
+.venv/
+.cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+runs/
+.streamlit/secrets.toml
+
+# Assignment data stays local (public repo = code only). Rebuild with scripts/prepare_data.py.
+data/*.jsonl
+data/*.csv
+!data/gold_gender.csv
+FDE Hiring Assignment*.csv
+gender_predictions.jsonl
+predictions_50.jsonl
