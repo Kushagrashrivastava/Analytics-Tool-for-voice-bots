@@ -9,23 +9,31 @@ All scores use the assignment's scoring contract, scored by `aster-vale evaluate
 Model for every run: Groq `openai/gpt-oss-120b`, temperature 0, seed 7, reasoning effort medium, strict
 JSON-schema output.
 
-## 1. Status of the final run
+## 1. Final run (the submitted predictions)
 
-The submission must come from **one frozen prompt (v3) run once over all 50 calls**. That run was throttled
-by the Groq free tier's daily token limit (200K tokens/day for this account):
+`predictions_50.jsonl` comes from **one run of the frozen prompt v3 over all 50 calls**, using the README
+command:
+- 50 lines, in input order
+- 0 fallbacks, 0 contract violations: exactly 5 keys, valid pairs, `+05:30` with seconds or JSON `null`
 
-| Final run (prompt v3, frozen) | Calls | Status |
-|---|---|---|
-| AVT-001 … AVT-023 | 23 | ✅ complete, scored below |
-| AVT-024 … AVT-050 | 27 | ⏳ pending (resumes when the token quota resets; responses are cached so finished calls are not re-sent) |
+The run was throttled by the Groq free-tier daily token limit, so it completed over several passes. Finished
+calls were cached and never re-sent. The 25 calls run fresh in the final passes used 135,021 input and
+32,543 output tokens (~$0.04 at list price).
 
-`predictions_50.jsonl` and the full-run table will be added as soon as the remaining 27 calls finish.
+| Field | Correct | Accuracy | Points |
+|---|---|---|---|
+| Disposition | 49 / 50 | 98% | 14.7 / 15 |
+| Sub-disposition | 37 / 50 | 74% | 14.8 / 20 |
+| Lead quality | 49 / 50 | 98% | 14.7 / 15 |
+| Next call time | 47 / 50 | 94% | 18.8 / 20 |
+| **Total** | **36 / 50 fully correct (72%)** | | **63.0 / 70** |
 
 ## 2. Results
 
 | Run | Calls | Disposition | Sub-disp. | Lead quality | Next call | All 4 right | Points /70 |
 |---|---|---|---|---|---|---|---|
-| **Prompt v3 (final), frozen run** | AVT-001–023 (23) | **100%** | **91.3%** | **100%** | **100%** | **91.3%** | **68.3** |
+| **Prompt v3 final run (submitted)** | **AVT-001–050 (50)** | **98%** | **74%** | **98%** | **94%** | **72%** | **63.0** |
+| Prompt v3, first 23 calls of the final run | AVT-001–023 (23) | **100%** | **91.3%** | **100%** | **100%** | **91.3%** | **68.3** |
 | Prompt v1 + final rules | AVT-001–032 (32) | 100% | 84.4% | 93.8% | 100% | 78.1% | 65.9 |
 | **Prompt v2, held-out** | AVT-033–050 (18, not used while writing v2) | 94.4% | 66.7% | 88.9% | 88.9% | 55.6% | **58.6** |
 
@@ -33,7 +41,8 @@ by the Groq free tier's daily token limit (200K tokens/day for this account):
 - The v3 numbers are measured on calls whose errors helped shape v3, so they are optimistic.
 - The cleanest unseen-data estimate we have is the **v2 hold-out: 58.6 / 70**.
 - v3 was then improved using errors from *all* 50 calls, so no fully unseen calls remain to test v3 on.
-- A fair expectation for the private set is **between 58.6 and the v3 score**.
+- A fair expectation for the private set is **around 58–63 / 70**: between the v2 hold-out and the final
+  v3 run.
 
 ## 3. Failure patterns
 
@@ -52,7 +61,26 @@ Most lost points come from **sub-disposition**. In the v1+v2 evidence it cost 3.
 | **Vague callback not treated as vague** | AVT-024 | "Call back next week after Dussehra" is event-qualified, so F12 says vague → F7 (+3 days) | Rule fix in code (no LLM change) |
 | **Vague deferral missed while a blocker is present** | AVT-001, AVT-003 under v3 | The model set `vague_postponement=false` whenever it found a blocker | Deterministic backstop: customer deferral phrases in the last turns → F7. Checked against all 50 gold labels: it never overrides a correct answer |
 
-**Remaining v3 errors in the final run so far:**
+**Final-run (v3) failure patterns** (14 calls with a wrong label; details per call in the dashboard's Model
+quality tab):
+
+| Pattern | Calls | What happened |
+|---|---|---|
+| **Blocker under-extraction** (main cause) | AVT-018, 028, 031, 034, 041, 047, 048, 050 | v3 returned no blocker although the customer gave one (travel, cost, treatment doubts, family), so the label fell through to Vague Deferral, Information Requested, Specific Callback or Further Discussion. v3's stricter wording ("the blocker quote must be the customer's own words") likely made the model too cautious. **8 of the 13 sub-disposition misses.** |
+| Wrong blocker chosen | AVT-020, 038, 049 | Logistics read as family (020), an earlier medicine mention lost to a later price question (038), insurance outranked by "discuss at home as well" (049) |
+| "Forget it" read as a final refusal | AVT-042 | The key treats the call as still open (Follow-up / Treatment Concern) |
+| Postponement or acknowledgement missed | AVT-043, AVT-048 | "Consult my family and then decide" not flagged vague (+3 days); "I'll call you back tomorrow" → "Alright" not marked acknowledged |
+| Routine location request read as an information request | AVT-032 | |
+
+**What v3 fixed compared with earlier runs:** AVT-041 is no longer a false booking. AVT-022, AVT-030 and
+AVT-040 are now correct.
+
+**Lesson:** each prompt change fixed some calls and broke others. The single frozen run (63.0) scores below
+the best-per-call development mix (64.4), which is why the submission uses one run rather than cherry-picked
+results. The most promising next change would be to relax the blocker-quote requirement and add an explicit
+"if the customer names any reason for not booking, list it" instruction, validated on fresh, unseen calls.
+
+**Earlier observation from the first 23 calls of this run:**
 - **AVT-018** (key Treatment Concern → ours Vague Deferral). v1 had this right, which shows a prompt change can fix some calls and break others. This is why the submission uses one frozen run, not the best result per call.
 - **AVT-020** (key Travel → ours Family).
 

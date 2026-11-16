@@ -4,6 +4,8 @@ Labels pain-clinic enrollment calls with **disposition, sub-disposition, lead qu
 time** (policy `assignment-v2`), and infers **caller/patient gender without any transformer model**.
 A Streamlit dashboard sits on top of the same code for interactive review.
 
+**Live demo:** https://aster-vale-call-outcomes.streamlit.app/
+
 ```
 transcript ──► Groq · openai/gpt-oss-120b ──► Evidence JSON ──► deterministic Python policy ──► 4 labels
                (reads the call, quotes evidence,   (strict schema)   (precedence D6, PAIR, tie-breaks,
@@ -118,9 +120,8 @@ All reported numbers below come from **Groq `openai/gpt-oss-120b`**, the graded 
 ## Results
 
 See [`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) for per-field accuracy, failure patterns, the iteration log,
-runtime, token usage and cost. Predictions for all 50 supplied calls (`predictions_50.jsonl`) come from one
-run of the frozen prompt v3; that run is in progress (throttled by the Groq free-tier daily token limit) and the
-file will be added when it completes. See ERROR_ANALYSIS.md §1 for the current status.
+runtime, token usage and cost. Predictions for all 50 supplied calls: [`predictions_50.jsonl`](predictions_50.jsonl),
+from one run of the frozen prompt v3 (63.0 / 70 on the 50 labelled calls; 72% of calls fully correct).
 
 ## Task 2 · Gender without transformers (`core/gender.py`)
 
@@ -145,7 +146,7 @@ mis-addressing callers, and patients referred to without a kinship word.
 
 ## Dashboard
 
-`streamlit run app/streamlit_app.py` → paste a transcript, upload JSONL/CSV, or load the saved 50-call run.
+Live: https://aster-vale-call-outcomes.streamlit.app/ · locally: `streamlit run app/streamlit_app.py` → paste a transcript, upload JSONL/CSV, or load the saved 50-call run.
 KPIs, disposition / lead-quality / sub-disposition / callback-timeline bar charts (no pie charts: ~20
 sub-labels and ordinal lead quality read far better as sorted or ordered bars), per-call evidence quotes and
 rule trace beside the transcript, accuracy and confusion matrix when gold labels are present, and gender.

@@ -1,25 +1,89 @@
 {
   "_about": "Iteration log and LLM usage. Scores are against the answer key in the assignment sheet; points use the assignment weights (/70).",
   "iterations": [
-    {"step": "Prompt v1 baseline", "kind": "prompt", "calls": "AVT-001–032 (32)", "score": "65.3 / 70", "exact": "75%",
-     "change": "First evidence-extraction prompt plus deterministic policy rules."},
-    {"step": "Rule fix: event-based callback is vague", "kind": "rule (no LLM)", "calls": "same 32, re-scored", "score": "65.9 / 70", "exact": "78%",
-     "change": "An acknowledged callback like 'next week after Dussehra' is vague (F12), so it falls back to call date + 3 days (F7). Next-call accuracy 97% → 100%."},
-    {"step": "Prompt v2", "kind": "prompt", "calls": "AVT-033–050 (18 unseen)", "score": "58.6 / 70", "exact": "56%",
-     "change": "Clarified: a family member needed only as companion is Travel; a cataract follow-up is Current Treatment; blocker quotes must be the customer's words; a routine location request is not an information request; 'Sunday' is not 'next Sunday'; added low-intent cues. Tested only on calls not used to write it (honest hold-out)."},
-    {"step": "Prompt v3", "kind": "prompt", "calls": "AVT-001–014 (14)", "score": "67.1 / 70", "exact": "86%",
-     "change": "A booking needs the agent to confirm the slot; insurance or office checks are Cost; clinic reviewing reports is Treatment Concern; the final stated next step outranks earlier complaints; an accepted 'Should I call next week?' is a callback; 'not exactly pain' means the need is unclear."},
-    {"step": "Rule: deferral-phrase backstop", "kind": "rule (no LLM)", "calls": "same 14, re-scored", "score": "70.0 / 70", "exact": "100%",
-     "change": "If the customer's last turns say 'let you know', 'I'll think' etc. and no time was agreed, apply F7 (+3 days). Checked on all 50 gold labels: it never overrides a correct answer. No change on v1/v2 evidence."},
-    {"step": "Policy audit hardening", "kind": "rule (no LLM)", "calls": "all saved evidence, re-scored", "score": "unchanged", "exact": "unchanged",
-     "change": "A final vague answer cancels an earlier callback (F9); a month/day without a year rolls forward (F6); a booking must have a clock time or window (D3); High needs a proven 0–6 day offset (LQ). These are rare cases, so no score change on the 50 calls."},
-    {"step": "Final run: prompt v3 on all 50", "kind": "final", "calls": "AVT-001–050 (50)", "score": "pending", "exact": "pending",
-     "change": "One frozen prompt, one command, for the submitted predictions_50.jsonl. In progress: limited by Groq free tier (200K tokens/day)."}
+    {
+      "step": "Prompt v1 baseline",
+      "kind": "prompt",
+      "calls": "AVT-001–032 (32)",
+      "score": "65.3 / 70",
+      "exact": "75%",
+      "change": "First evidence-extraction prompt plus deterministic policy rules."
+    },
+    {
+      "step": "Rule fix: event-based callback is vague",
+      "kind": "rule (no LLM)",
+      "calls": "same 32, re-scored",
+      "score": "65.9 / 70",
+      "exact": "78%",
+      "change": "An acknowledged callback like 'next week after Dussehra' is vague (F12), so it falls back to call date + 3 days (F7). Next-call accuracy 97% → 100%."
+    },
+    {
+      "step": "Prompt v2",
+      "kind": "prompt",
+      "calls": "AVT-033–050 (18 unseen)",
+      "score": "58.6 / 70",
+      "exact": "56%",
+      "change": "Clarified: a family member needed only as companion is Travel; a cataract follow-up is Current Treatment; blocker quotes must be the customer's words; a routine location request is not an information request; 'Sunday' is not 'next Sunday'; added low-intent cues. Tested only on calls not used to write it (honest hold-out)."
+    },
+    {
+      "step": "Prompt v3",
+      "kind": "prompt",
+      "calls": "AVT-001–014 (14)",
+      "score": "67.1 / 70",
+      "exact": "86%",
+      "change": "A booking needs the agent to confirm the slot; insurance or office checks are Cost; clinic reviewing reports is Treatment Concern; the final stated next step outranks earlier complaints; an accepted 'Should I call next week?' is a callback; 'not exactly pain' means the need is unclear."
+    },
+    {
+      "step": "Rule: deferral-phrase backstop",
+      "kind": "rule (no LLM)",
+      "calls": "same 14, re-scored",
+      "score": "70.0 / 70",
+      "exact": "100%",
+      "change": "If the customer's last turns say 'let you know', 'I'll think' etc. and no time was agreed, apply F7 (+3 days). Checked on all 50 gold labels: it never overrides a correct answer. No change on v1/v2 evidence."
+    },
+    {
+      "step": "Policy audit hardening",
+      "kind": "rule (no LLM)",
+      "calls": "all saved evidence, re-scored",
+      "score": "unchanged",
+      "exact": "unchanged",
+      "change": "A final vague answer cancels an earlier callback (F9); a month/day without a year rolls forward (F6); a booking must have a clock time or window (D3); High needs a proven 0–6 day offset (LQ). These are rare cases, so no score change on the 50 calls."
+    },
+    {
+      "step": "Final run: prompt v3 on all 50 (frozen)",
+      "kind": "final",
+      "calls": "AVT-001–050 (50)",
+      "score": "63.0 / 70",
+      "exact": "72%",
+      "change": "One frozen prompt, one command, no fallbacks: the submitted predictions_50.jsonl. v3 fixed the false booking (AVT-041) and several readiness/callback cases, but under-extracts blockers on some calls, so sub-disposition fell to 74%."
+    }
   ],
   "usage": [
-    {"run": "Prompt v1", "calls": 30, "runtime_s": 1216.8, "prompt_tokens": 151794, "completion_tokens": 35425},
-    {"run": "Prompt v2", "calls": 18, "runtime_s": 674.5, "prompt_tokens": 92472, "completion_tokens": 22748},
-    {"run": "Prompt v3 (first 14)", "calls": 14, "runtime_s": 620.8, "prompt_tokens": 77415, "completion_tokens": 16727}
+    {
+      "run": "Prompt v1",
+      "calls": 30,
+      "runtime_s": 1216.8,
+      "prompt_tokens": 151794,
+      "completion_tokens": 35425
+    },
+    {
+      "run": "Prompt v2",
+      "calls": 18,
+      "runtime_s": 674.5,
+      "prompt_tokens": 92472,
+      "completion_tokens": 22748
+    },
+    {
+      "run": "Prompt v3 (first 14)",
+      "calls": 14,
+      "runtime_s": 620.8,
+      "prompt_tokens": 77415,
+      "completion_tokens": 16727
+    }
   ],
-  "price_per_million_usd": {"input": 0.15, "output": 0.60, "source": "Groq list price for openai/gpt-oss-120b"}
+  "price_per_million_usd": {
+    "input": 0.15,
+    "output": 0.6,
+    "source": "Groq list price for openai/gpt-oss-120b"
+  }
 }
